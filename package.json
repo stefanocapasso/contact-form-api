@@ -1,0 +1,7 @@
+{
+  "name": "contact-form-api",
+  "private": true,
+  "devDependencies": {
+    "wrangler": "4.124.0"
+  }
+}
