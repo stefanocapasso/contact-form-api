@@ -63,20 +63,8 @@ export default {
       return json({ ok: false, error: "Origin not allowed" }, 403);
     }
 
-    const envStatus = {
-      BREVO_API_KEY: Boolean(env.BREVO_API_KEY),
-      FROM_EMAIL: Boolean(env.FROM_EMAIL),
-      FROM_NAME: Boolean(env.FROM_NAME),
-      TO_EMAIL: Boolean(env.TO_EMAIL),
-    };
-
-    if (!envStatus.BREVO_API_KEY || !envStatus.FROM_EMAIL || !envStatus.TO_EMAIL) {
-      console.error("Missing Worker env", envStatus);
-      return json({
-        ok: false,
-        error: "Server configuration incomplete",
-        env: envStatus,
-      }, 500, corsOrigin);
+    if (!env.BREVO_API_KEY || !env.FROM_EMAIL || !env.TO_EMAIL) {
+      return json({ ok: false, error: "Server configuration incomplete" }, 500, corsOrigin);
     }
 
     let body;
