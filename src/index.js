@@ -1,6 +1,8 @@
 const DEFAULT_ALLOWED_ORIGINS = [
   "https://www.stefanocapasso.net",
   "https://stefanocapasso.net",
+  "https://www.counselingonline.biz",
+  "https://counselingonline.biz",
   "https://raw.githack.com",
 ];
 
@@ -77,6 +79,12 @@ export default {
     const name = String(body.name || "").trim();
     const email = String(body.email || "").trim();
     const message = String(body.message || "").trim();
+    const website = String(body.website || "").trim();
+
+    // Honeypot: i visitatori reali non compilano questo campo nascosto.
+    if (website) {
+      return json({ ok: true }, 200, corsOrigin);
+    }
 
     if (!name || name.length > 120) {
       return json({ ok: false, error: "Nome non valido" }, 400, corsOrigin);
@@ -84,19 +92,22 @@ export default {
     if (!isValidEmail(email) || email.length > 254) {
       return json({ ok: false, error: "Email non valida" }, 400, corsOrigin);
     }
-    if (!message || message.length > 5000) {
+    if (message.length > 5000) {
       return json({ ok: false, error: "Messaggio non valido" }, 400, corsOrigin);
     }
 
-    const subject = `Nuovo contatto dal sito - ${name}`;
+    const sourceSite = origin
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "") || "sito web";
+    const subject = `Nuovo contatto da ${sourceSite} - ${name}`;
     const textContent = [
-      "Nuovo messaggio dal modulo di contatto di stefanocapasso.net",
+      `Nuovo messaggio dal modulo di contatto di ${sourceSite}`,
       "",
       `Nome: ${name}`,
       `Email: ${email}`,
       "",
       "Messaggio:",
-      message,
+      message || "(nessun messaggio)",
     ].join("\n");
 
     const brevoResponse = await fetch("https://api.brevo.com/v3/smtp/email", {
