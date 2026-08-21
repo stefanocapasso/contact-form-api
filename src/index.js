@@ -193,7 +193,7 @@ async function contactForm(request, env, corsOrigin, origin) {
   if (message.length > 5000) return json({ok:false,error:"Messaggio non valido"},400,corsOrigin);
   const sourceSite = origin.replace(/^https?:\/\//, "").replace(/^www\./, "") || "sito web";
   const isBalance = sourceSite === "balancefelici.com" || sourceSite.startsWith("balancefelici-com.");
-  const toEmail = isBalance ? "filippofelici@gmail.com" : env.TO_EMAIL;
+  const toEmail = isBalance ? "stefano.capasso@gmail.com" : env.TO_EMAIL;
   const senderName = isBalance ? "Balance Felici - sito web" : (env.FROM_NAME || "Stefano Capasso - sito web");
   const subject = `Nuovo contatto da ${sourceSite} - ${name}`;
   const textContent = [`Nuovo messaggio dal modulo di contatto di ${sourceSite}`,"",`Nome: ${name}`,`Email: ${email}`,"","Messaggio:",message || "(nessun messaggio)"].join("\n");
