@@ -70,6 +70,12 @@ function requirePublishingConfig(request, env, corsOrigin) {
 }
 function repoPath(repo, path) { return `/repos/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, "/")}`; }
 
+async function ensureRepoAccess(env, site) {
+  const repo = PUBLISH_REPOS[site];
+  const r = await githubRequest(env, `/repos/${repo}`);
+  if (!r.ok) throw new Error(`Accesso GitHub non disponibile per ${site} (${r.status})`);
+}
+
 async function getGitHubFile(env, repo, path) {
   const r = await githubRequest(env, repoPath(repo, path));
   if (r.status === 404) return null;
@@ -119,29 +125,41 @@ async function listArticles(request, env, corsOrigin, url) {
   const configError = requirePublishingConfig(request, env, corsOrigin); if (configError) return configError;
   const site = url.searchParams.get("site") || "";
   if (!ACTIVE_SITES.includes(site)) return json({ok:false,error:"Sito non disponibile"},400,corsOrigin);
-  const repo = PUBLISH_REPOS[site];
-  const r = await githubRequest(env, `/repos/${repo}/contents/content/posts`);
-  if (r.status === 404) return json({ok:true,articles:[]},200,corsOrigin);
-  if (!r.ok) return json({ok:false,error:"Impossibile leggere gli articoli"},502,corsOrigin);
-  const items = await r.json(); const articles = [];
-  for (const item of items.filter(x => x.type === "file" && x.name.endsWith(".json"))) {
-    try {
-      const f = await getGitHubFile(env, repo, item.path); const p = JSON.parse(f.text);
-      if (p.status === "published") articles.push({slug:p.slug,title:p.title,date:p.date});
-    } catch (e) { console.error("Article list item", item.path, e); }
+  try {
+    await ensureRepoAccess(env, site);
+    const repo = PUBLISH_REPOS[site];
+    const r = await githubRequest(env, `/repos/${repo}/contents/content/posts`);
+    if (r.status === 404) return json({ok:true,articles:[]},200,corsOrigin);
+    if (!r.ok) return json({ok:false,error:"Impossibile leggere gli articoli"},502,corsOrigin);
+    const items = await r.json(); const articles = [];
+    for (const item of items.filter(x => x.type === "file" && x.name.endsWith(".json"))) {
+      try {
+        const f = await getGitHubFile(env, repo, item.path); const p = JSON.parse(f.text);
+        if (p.status === "published") articles.push({slug:p.slug,title:p.title,date:p.date});
+      } catch (e) { console.error("Article list item", item.path, e); }
+    }
+    articles.sort((a,b) => (b.date || "").localeCompare(a.date || ""));
+    return json({ok:true,articles},200,corsOrigin);
+  } catch (e) {
+    console.error("List articles", e);
+    return json({ok:false,error:e.message || "Errore GitHub"},502,corsOrigin);
   }
-  articles.sort((a,b) => (b.date || "").localeCompare(a.date || ""));
-  return json({ok:true,articles},200,corsOrigin);
 }
 
 async function getArticle(request, env, corsOrigin, url) {
   const configError = requirePublishingConfig(request, env, corsOrigin); if (configError) return configError;
   const site = url.searchParams.get("site") || ""; const slug = slugify(url.searchParams.get("slug") || "");
   if (!ACTIVE_SITES.includes(site) || !slug) return json({ok:false,error:"Richiesta non valida"},400,corsOrigin);
-  const f = await getGitHubFile(env, PUBLISH_REPOS[site], `content/posts/${slug}.json`);
-  if (!f) return json({ok:false,error:"Articolo non trovato"},404,corsOrigin);
-  const post = JSON.parse(f.text);
-  return json({ok:true,article:post},200,corsOrigin);
+  try {
+    await ensureRepoAccess(env, site);
+    const f = await getGitHubFile(env, PUBLISH_REPOS[site], `content/posts/${slug}.json`);
+    if (!f) return json({ok:false,error:"Articolo non trovato"},404,corsOrigin);
+    const post = JSON.parse(f.text);
+    return json({ok:true,article:post},200,corsOrigin);
+  } catch (e) {
+    console.error("Get article", e);
+    return json({ok:false,error:e.message || "Errore GitHub"},502,corsOrigin);
+  }
 }
 
 async function publishArticle(request, env, corsOrigin) {
@@ -163,24 +181,48 @@ async function publishArticle(request, env, corsOrigin) {
     if (description.length > 220) return json({ok:false,error:"Meta description troppo lunga"},400,corsOrigin);
     if (facebookVideo && !/^https:\/\/(www\.)?facebook\.com\//i.test(facebookVideo)) return json({ok:false,error:"URL Facebook non valido"},400,corsOrigin);
   }
-  const results = [];
-  for (const site of sites) {
-    const repo = PUBLISH_REPOS[site]; const path = `content/posts/${slug}.json`; const existing = await getGitHubFile(env, repo, path);
-    if (action === "new" && existing) return json({ok:false,error:`Esiste già su ${site}`},409,corsOrigin);
-    if ((action === "edit" || action === "delete") && !existing) return json({ok:false,error:`Articolo non trovato su ${site}`},404,corsOrigin);
-    let old = existing ? JSON.parse(existing.text) : {};
-    if (action === "delete") {
-      old.status = "deleted"; old.managed = true; old.deleted_at = new Date().toISOString();
-      await putGitHubFile(env, repo, path, toBase64Utf8(JSON.stringify(old,null,2)+"\n"), `Delete article: ${old.title || slug}`, existing.sha);
-      results.push({site,slug,status:"deleted"}); continue;
+
+  try {
+    const targets = [];
+    for (const site of sites) {
+      await ensureRepoAccess(env, site);
+      const repo = PUBLISH_REPOS[site];
+      const path = `content/posts/${slug}.json`;
+      const existing = await getGitHubFile(env, repo, path);
+      let old = {};
+      if (existing) {
+        try { old = JSON.parse(existing.text); }
+        catch { throw new Error(`Articolo non leggibile su ${site}`); }
+      }
+      if (action === "new" && existing && old.status !== "deleted") {
+        return json({ok:false,error:`Esiste già su ${site}`},409,corsOrigin);
+      }
+      if ((action === "edit" || action === "delete") && !existing) {
+        return json({ok:false,error:`Articolo non trovato su ${site}`},404,corsOrigin);
+      }
+      targets.push({site,repo,path,existing,old});
     }
-    let image = old.image || "";
-    if (imageData) image = await saveImage(env, site, slug, imageData, imageName, imageType);
-    const post = {version:2,site,title,slug,date,description,image,facebook_video:facebookVideo,body:articleBody,category:old.category || "",status:"published",managed:true};
-    await putGitHubFile(env, repo, path, toBase64Utf8(JSON.stringify(post,null,2)+"\n"), `${action === "edit" ? "Update" : "Publish"} article: ${title}`, existing?.sha || null);
-    results.push({site,slug,path,image,status:"published"});
+
+    const results = [];
+    for (const target of targets) {
+      const {site,repo,path,existing,old} = target;
+      if (action === "delete") {
+        old.status = "deleted"; old.managed = true; old.deleted_at = new Date().toISOString();
+        await putGitHubFile(env, repo, path, toBase64Utf8(JSON.stringify(old,null,2)+"\n"), `Delete article: ${old.title || slug}`, existing.sha);
+        results.push({site,slug,status:"deleted"});
+        continue;
+      }
+      let image = old.image || "";
+      if (imageData) image = await saveImage(env, site, slug, imageData, imageName, imageType);
+      const post = {version:2,site,title,slug,date,description,image,facebook_video:facebookVideo,body:articleBody,category:old.category || "",status:"published",managed:true};
+      await putGitHubFile(env, repo, path, toBase64Utf8(JSON.stringify(post,null,2)+"\n"), `${action === "edit" ? "Update" : "Publish"} article: ${title}`, existing?.sha || null);
+      results.push({site,slug,path,image,status:"published"});
+    }
+    return json({ok:true,results},200,corsOrigin);
+  } catch (e) {
+    console.error("Publish article", e);
+    return json({ok:false,error:e.message || "Errore durante la pubblicazione"},502,corsOrigin);
   }
-  return json({ok:true,results},200,corsOrigin);
 }
 
 async function contactForm(request, env, corsOrigin, origin) {
@@ -206,15 +248,20 @@ async function contactForm(request, env, corsOrigin, origin) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url); const origin = request.headers.get("Origin") || ""; const corsOrigin = allowedOrigins(env).has(origin) ? origin : "";
-    if (request.method === "OPTIONS") {
-      if (!corsOrigin) return new Response(null,{status:403});
-      return new Response(null,{status:204,headers:{"Access-Control-Allow-Origin":corsOrigin,"Access-Control-Allow-Methods":"GET, POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type, X-Publish-Password","Access-Control-Max-Age":"86400","Vary":"Origin"}});
+    try {
+      if (request.method === "OPTIONS") {
+        if (!corsOrigin) return new Response(null,{status:403});
+        return new Response(null,{status:204,headers:{"Access-Control-Allow-Origin":corsOrigin,"Access-Control-Allow-Methods":"GET, POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type, X-Publish-Password","Access-Control-Max-Age":"86400","Vary":"Origin"}});
+      }
+      if (request.method === "GET" && url.pathname === "/") return new Response("Contact Form API OK",{headers:{"Cache-Control":"no-store"}});
+      if (request.method === "GET" && url.pathname === "/articles") return listArticles(request,env,corsOrigin,url);
+      if (request.method === "GET" && url.pathname === "/article") return getArticle(request,env,corsOrigin,url);
+      if (request.method === "POST" && url.pathname === "/contact") return contactForm(request,env,corsOrigin,origin);
+      if (request.method === "POST" && url.pathname === "/publish") return publishArticle(request,env,corsOrigin);
+      return json({ok:false,error:"Not found"},404,corsOrigin);
+    } catch (e) {
+      console.error("Unhandled worker error", e);
+      return json({ok:false,error:e.message || "Errore interno"},500,corsOrigin);
     }
-    if (request.method === "GET" && url.pathname === "/") return new Response("Contact Form API OK",{headers:{"Cache-Control":"no-store"}});
-    if (request.method === "GET" && url.pathname === "/articles") return listArticles(request,env,corsOrigin,url);
-    if (request.method === "GET" && url.pathname === "/article") return getArticle(request,env,corsOrigin,url);
-    if (request.method === "POST" && url.pathname === "/contact") return contactForm(request,env,corsOrigin,origin);
-    if (request.method === "POST" && url.pathname === "/publish") return publishArticle(request,env,corsOrigin);
-    return json({ok:false,error:"Not found"},404,corsOrigin);
   },
 };
