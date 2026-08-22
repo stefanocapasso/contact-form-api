@@ -3,6 +3,8 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "https://stefanocapasso.net",
   "https://www.counselingonline.biz",
   "https://counselingonline.biz",
+  "https://www.balancefelici.com",
+  "https://balancefelici.com",
   "https://raw.githack.com",
 ];
 
@@ -189,9 +191,12 @@ async function contactForm(request, env, corsOrigin, origin) {
   if (!isValidEmail(email) || email.length > 254) return json({ok:false,error:"Email non valida"},400,corsOrigin);
   if (message.length > 5000) return json({ok:false,error:"Messaggio non valido"},400,corsOrigin);
   const sourceSite = origin.replace(/^https?:\/\//, "").replace(/^www\./, "") || "sito web";
+  const isBalance = sourceSite === "balancefelici.com";
+  const toEmail = isBalance ? "stefano.capasso@gmail.com" : env.TO_EMAIL;
+  const senderName = isBalance ? "Balance Felici - sito web" : (env.FROM_NAME || "Sito web");
   const subject = `Nuovo contatto da ${sourceSite} - ${name}`;
   const textContent = [`Nuovo messaggio dal modulo di contatto di ${sourceSite}`,"",`Nome: ${name}`,`Email: ${email}`,"","Messaggio:",message || "(nessun messaggio)"].join("\n");
-  const brevoResponse = await fetch("https://api.brevo.com/v3/smtp/email", {method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json","api-key":env.BREVO_API_KEY},body:JSON.stringify({sender:{name:env.FROM_NAME || "Sito web",email:env.FROM_EMAIL},to:[{email:env.TO_EMAIL}],replyTo:{name,email},subject,textContent})});
+  const brevoResponse = await fetch("https://api.brevo.com/v3/smtp/email", {method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json","api-key":env.BREVO_API_KEY},body:JSON.stringify({sender:{name:senderName,email:env.FROM_EMAIL},to:[{email:toEmail}],replyTo:{name,email},subject,textContent})});
   if (!brevoResponse.ok) { const detail = await brevoResponse.text(); console.error("Brevo error",brevoResponse.status,detail); return json({ok:false,error:"Invio non riuscito"},502,corsOrigin); }
   return json({ok:true},200,corsOrigin);
 }
