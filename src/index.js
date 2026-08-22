@@ -12,6 +12,7 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "https://massoterapistastefanucci-it.stefano-capasso.workers.dev",
   "https://www.marinadanella.it",
   "https://marinadanella.it",
+  "https://marinadanella-it.stefano-capasso.workers.dev",
   "https://raw.githack.com",
 ];
 
@@ -270,7 +271,7 @@ async function contactForm(request, env, corsOrigin, origin) {
   const sourceSite = origin.replace(/^https?:\/\//, "").replace(/^www\./, "") || "sito web";
   const isBalance = sourceSite === "balancefelici.com";
   const isMassoterapista = sourceSite === "massoterapistastefanucci.it" || sourceSite === "massoterapistastefanucci-it.stefano-capasso.workers.dev";
-  const isMarinaDanella = sourceSite === "marinadanella.it";
+  const isMarinaDanella = sourceSite === "marinadanella.it" || sourceSite === "marinadanella-it.stefano-capasso.workers.dev";
   const toEmail = isBalance ? "filippofelici@gmail.com" : (isMassoterapista ? "archiviotutto2016@gmail.com" : (isMarinaDanella ? "marina.danella@libero.it" : env.TO_EMAIL));
   const senderName = isBalance ? "Balance Felici - sito web" : (isMassoterapista ? "Massoterapista Stefanucci - sito web" : (isMarinaDanella ? "Marina D'Anella - sito web" : (env.FROM_NAME || "Sito web")));
   const subject = `Nuovo contatto da ${sourceSite} - ${name}`;
