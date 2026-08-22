@@ -13,6 +13,9 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "https://www.marinadanella.it",
   "https://marinadanella.it",
   "https://marinadanella-it.stefano-capasso.workers.dev",
+  "https://www.duodulcimermusicaceltica.it",
+  "https://duodulcimermusicaceltica.it",
+  "https://duodulcimermusicaceltica-it.stefano-capasso.workers.dev",
   "https://raw.githack.com",
 ];
 
@@ -152,14 +155,12 @@ async function listArticles(request, env, corsOrigin, url) {
   try {
     await ensureRepoAccess(env, site);
     const repo = PUBLISH_REPOS[site];
-
     if (site === "counseloraroma.net") {
       const current = await readManagedIndex(env, repo);
       const articles = current.items.filter(x => x && x.status === "published" && x.slug).map(x => ({slug:x.slug,title:x.title,date:x.date}));
       articles.sort((a,b) => (b.date || "").localeCompare(a.date || ""));
       return json({ok:true,articles},200,corsOrigin);
     }
-
     const r = await githubRequest(env, `/repos/${repo}/contents/content/posts`);
     if (r.status === 404) return json({ok:true,articles:[]},200,corsOrigin);
     if (!r.ok) return json({ok:false,error:"Impossibile leggere gli articoli"},502,corsOrigin);
@@ -213,7 +214,6 @@ async function publishArticle(request, env, corsOrigin) {
     if (description.length > 220) return json({ok:false,error:"Meta description troppo lunga"},400,corsOrigin);
     if (facebookVideo && !/^https:\/\/(www\.)?facebook\.com\//i.test(facebookVideo)) return json({ok:false,error:"URL Facebook non valido"},400,corsOrigin);
   }
-
   try {
     const targets = [];
     for (const site of sites) {
@@ -226,15 +226,10 @@ async function publishArticle(request, env, corsOrigin) {
         try { old = JSON.parse(existing.text); }
         catch { throw new Error(`Articolo non leggibile su ${site}`); }
       }
-      if (action === "new" && existing && old.status !== "deleted") {
-        return json({ok:false,error:`Esiste già su ${site}`},409,corsOrigin);
-      }
-      if ((action === "edit" || action === "delete") && !existing) {
-        return json({ok:false,error:`Articolo non trovato su ${site}`},404,corsOrigin);
-      }
+      if (action === "new" && existing && old.status !== "deleted") return json({ok:false,error:`Esiste già su ${site}`},409,corsOrigin);
+      if ((action === "edit" || action === "delete") && !existing) return json({ok:false,error:`Articolo non trovato su ${site}`},404,corsOrigin);
       targets.push({site,repo,path,existing,old});
     }
-
     const results = [];
     for (const target of targets) {
       const {site,repo,path,existing,old} = target;
@@ -272,8 +267,9 @@ async function contactForm(request, env, corsOrigin, origin) {
   const isBalance = sourceSite === "balancefelici.com";
   const isMassoterapista = sourceSite === "massoterapistastefanucci.it" || sourceSite === "massoterapistastefanucci-it.stefano-capasso.workers.dev";
   const isMarinaDanella = sourceSite === "marinadanella.it" || sourceSite === "marinadanella-it.stefano-capasso.workers.dev";
-  const toEmail = isBalance ? "filippofelici@gmail.com" : (isMassoterapista ? "archiviotutto2016@gmail.com" : (isMarinaDanella ? "marina.danella@libero.it" : env.TO_EMAIL));
-  const senderName = isBalance ? "Balance Felici - sito web" : (isMassoterapista ? "Massoterapista Stefanucci - sito web" : (isMarinaDanella ? "Marina D'Anella - sito web" : (env.FROM_NAME || "Sito web")));
+  const isDuoDulcimer = sourceSite === "duodulcimermusicaceltica.it" || sourceSite === "duodulcimermusicaceltica-it.stefano-capasso.workers.dev";
+  const toEmail = isBalance ? "filippofelici@gmail.com" : (isMassoterapista ? "archiviotutto2016@gmail.com" : (isMarinaDanella ? "marina.danella@libero.it" : (isDuoDulcimer ? "dulcimerensemble@gmail.com" : env.TO_EMAIL)));
+  const senderName = isBalance ? "Balance Felici - sito web" : (isMassoterapista ? "Massoterapista Stefanucci - sito web" : (isMarinaDanella ? "Marina D'Anella - sito web" : (isDuoDulcimer ? "Duo Dulcimer & Ensemble - sito web" : (env.FROM_NAME || "Sito web"))));
   const subject = `Nuovo contatto da ${sourceSite} - ${name}`;
   const textContent = [`Nuovo messaggio dal modulo di contatto di ${sourceSite}`,"",`Nome: ${name}`,`Email: ${email}`,"","Messaggio:",message || "(nessun messaggio)"].join("\n");
   const brevoResponse = await fetch("https://api.brevo.com/v3/smtp/email", {method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json","api-key":env.BREVO_API_KEY},body:JSON.stringify({sender:{name:senderName,email:env.FROM_EMAIL},to:[{email:toEmail}],replyTo:{name,email},subject,textContent})});
