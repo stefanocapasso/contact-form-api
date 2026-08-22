@@ -135,7 +135,7 @@ async function listArticles(request, env, corsOrigin, url) {
     for (const item of items.filter(x => x.type === "file" && x.name.endsWith(".json"))) {
       try {
         const f = await getGitHubFile(env, repo, item.path); const p = JSON.parse(f.text);
-        if (p.status === "published") articles.push({slug:p.slug,title:p.title,date:p.date});
+        if (p.status === "published" && (site !== "counseloraroma.net" || p.managed === true)) articles.push({slug:p.slug,title:p.title,date:p.date});
       } catch (e) { console.error("Article list item", item.path, e); }
     }
     articles.sort((a,b) => (b.date || "").localeCompare(a.date || ""));
