@@ -7,6 +7,9 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "https://counseloraroma.net",
   "https://www.balancefelici.com",
   "https://balancefelici.com",
+  "https://www.massoterapistastefanucci.it",
+  "https://massoterapistastefanucci.it",
+  "https://massoterapistastefanucci-it.stefano-capasso.workers.dev",
   "https://raw.githack.com",
 ];
 
@@ -236,8 +239,9 @@ async function contactForm(request, env, corsOrigin, origin) {
   if (message.length > 5000) return json({ok:false,error:"Messaggio non valido"},400,corsOrigin);
   const sourceSite = origin.replace(/^https?:\/\//, "").replace(/^www\./, "") || "sito web";
   const isBalance = sourceSite === "balancefelici.com";
-  const toEmail = isBalance ? "filippofelici@gmail.com" : env.TO_EMAIL;
-  const senderName = isBalance ? "Balance Felici - sito web" : (env.FROM_NAME || "Sito web");
+  const isMassoterapista = sourceSite === "massoterapistastefanucci.it" || sourceSite === "massoterapistastefanucci-it.stefano-capasso.workers.dev";
+  const toEmail = isBalance ? "filippofelici@gmail.com" : (isMassoterapista ? "archiviotutto2016@gmail.com" : env.TO_EMAIL);
+  const senderName = isBalance ? "Balance Felici - sito web" : (isMassoterapista ? "Massoterapista Stefanucci - sito web" : (env.FROM_NAME || "Sito web"));
   const subject = `Nuovo contatto da ${sourceSite} - ${name}`;
   const textContent = [`Nuovo messaggio dal modulo di contatto di ${sourceSite}`,"",`Nome: ${name}`,`Email: ${email}`,"","Messaggio:",message || "(nessun messaggio)"].join("\n");
   const brevoResponse = await fetch("https://api.brevo.com/v3/smtp/email", {method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json","api-key":env.BREVO_API_KEY},body:JSON.stringify({sender:{name:senderName,email:env.FROM_EMAIL},to:[{email:toEmail}],replyTo:{name,email},subject,textContent})});
