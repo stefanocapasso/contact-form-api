@@ -20,6 +20,7 @@ const PUBLISH_REPOS = {
 };
 
 const ACTIVE_SITES = ["counselingonline.biz", "stefanocapasso.net", "counseloraroma.net"];
+const MANAGED_INDEX_PATH = "content/managed-posts.json";
 
 function json(data, status = 200, origin = "") {
   const headers = {"Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store"};
@@ -97,6 +98,23 @@ async function putGitHubFile(env, repo, path, contentBase64, message, sha = null
   return r.json();
 }
 
+async function readManagedIndex(env, repo) {
+  const f = await getGitHubFile(env, repo, MANAGED_INDEX_PATH);
+  if (!f) return {items:[], sha:null};
+  let items = [];
+  try { items = JSON.parse(f.text); } catch { items = []; }
+  if (!Array.isArray(items)) items = [];
+  return {items, sha:f.sha};
+}
+
+async function updateManagedIndex(env, repo, article, remove = false) {
+  const current = await readManagedIndex(env, repo);
+  let items = current.items.filter(x => x && x.slug !== article.slug);
+  if (!remove) items.push({slug:article.slug,title:article.title,date:article.date,status:"published"});
+  items.sort((a,b) => (b.date || "").localeCompare(a.date || ""));
+  await putGitHubFile(env, repo, MANAGED_INDEX_PATH, toBase64Utf8(JSON.stringify(items,null,2)+"\n"), `Update managed article index: ${article.slug}`, current.sha);
+}
+
 function imageExtension(name, type) {
   const n = String(name || "").toLowerCase();
   if (type === "image/jpeg" || n.endsWith(".jpg") || n.endsWith(".jpeg")) return "jpg";
@@ -131,6 +149,14 @@ async function listArticles(request, env, corsOrigin, url) {
   try {
     await ensureRepoAccess(env, site);
     const repo = PUBLISH_REPOS[site];
+
+    if (site === "counseloraroma.net") {
+      const current = await readManagedIndex(env, repo);
+      const articles = current.items.filter(x => x && x.status === "published" && x.slug).map(x => ({slug:x.slug,title:x.title,date:x.date}));
+      articles.sort((a,b) => (b.date || "").localeCompare(a.date || ""));
+      return json({ok:true,articles},200,corsOrigin);
+    }
+
     const r = await githubRequest(env, `/repos/${repo}/contents/content/posts`);
     if (r.status === 404) return json({ok:true,articles:[]},200,corsOrigin);
     if (!r.ok) return json({ok:false,error:"Impossibile leggere gli articoli"},502,corsOrigin);
@@ -138,7 +164,7 @@ async function listArticles(request, env, corsOrigin, url) {
     for (const item of items.filter(x => x.type === "file" && x.name.endsWith(".json"))) {
       try {
         const f = await getGitHubFile(env, repo, item.path); const p = JSON.parse(f.text);
-        if (p.status === "published" && (site !== "counseloraroma.net" || p.managed === true)) articles.push({slug:p.slug,title:p.title,date:p.date});
+        if (p.status === "published") articles.push({slug:p.slug,title:p.title,date:p.date});
       } catch (e) { console.error("Article list item", item.path, e); }
     }
     articles.sort((a,b) => (b.date || "").localeCompare(a.date || ""));
@@ -212,6 +238,7 @@ async function publishArticle(request, env, corsOrigin) {
       if (action === "delete") {
         old.status = "deleted"; old.managed = true; old.deleted_at = new Date().toISOString();
         await putGitHubFile(env, repo, path, toBase64Utf8(JSON.stringify(old,null,2)+"\n"), `Delete article: ${old.title || slug}`, existing.sha);
+        if (site === "counseloraroma.net") await updateManagedIndex(env, repo, {slug,title:old.title || slug,date:old.date || ""}, true);
         results.push({site,slug,status:"deleted"});
         continue;
       }
@@ -219,6 +246,7 @@ async function publishArticle(request, env, corsOrigin) {
       if (imageData) image = await saveImage(env, site, slug, imageData, imageName, imageType);
       const post = {version:2,site,title,slug,date,description,image,facebook_video:facebookVideo,body:articleBody,category:old.category || "",status:"published",managed:true};
       await putGitHubFile(env, repo, path, toBase64Utf8(JSON.stringify(post,null,2)+"\n"), `${action === "edit" ? "Update" : "Publish"} article: ${title}`, existing?.sha || null);
+      if (site === "counseloraroma.net") await updateManagedIndex(env, repo, post, false);
       results.push({site,slug,path,image,status:"published"});
     }
     return json({ok:true,results},200,corsOrigin);
