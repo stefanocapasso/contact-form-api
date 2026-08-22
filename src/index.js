@@ -3,6 +3,8 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "https://stefanocapasso.net",
   "https://www.counselingonline.biz",
   "https://counselingonline.biz",
+  "https://www.counseloraroma.net",
+  "https://counseloraroma.net",
   "https://www.balancefelici.com",
   "https://balancefelici.com",
   "https://raw.githack.com",
@@ -14,7 +16,7 @@ const PUBLISH_REPOS = {
   "counseloraroma.net": "stefanocapasso/counseloraroma.net",
 };
 
-const ACTIVE_SITES = ["counselingonline.biz", "stefanocapasso.net"];
+const ACTIVE_SITES = ["counselingonline.biz", "stefanocapasso.net", "counseloraroma.net"];
 
 function json(data, status = 200, origin = "") {
   const headers = {"Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store"};
@@ -77,7 +79,7 @@ async function getGitHubFile(env, repo, path) {
 }
 
 async function putGitHubFile(env, repo, path, contentBase64, message, sha = null) {
-  const body = {message, content: contentBase64, branch:"main"};
+  const body = {message, content:contentBase64, branch:"main"};
   if (sha) body.sha = sha;
   const r = await githubRequest(env, repoPath(repo, path), {
     method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)
@@ -168,13 +170,13 @@ async function publishArticle(request, env, corsOrigin) {
     if ((action === "edit" || action === "delete") && !existing) return json({ok:false,error:`Articolo non trovato su ${site}`},404,corsOrigin);
     let old = existing ? JSON.parse(existing.text) : {};
     if (action === "delete") {
-      old.status = "deleted"; old.deleted_at = new Date().toISOString();
+      old.status = "deleted"; old.managed = true; old.deleted_at = new Date().toISOString();
       await putGitHubFile(env, repo, path, toBase64Utf8(JSON.stringify(old,null,2)+"\n"), `Delete article: ${old.title || slug}`, existing.sha);
       results.push({site,slug,status:"deleted"}); continue;
     }
     let image = old.image || "";
     if (imageData) image = await saveImage(env, site, slug, imageData, imageName, imageType);
-    const post = {version:2,site,title,slug,date,description,image,facebook_video:facebookVideo,body:articleBody,status:"published"};
+    const post = {version:2,site,title,slug,date,description,image,facebook_video:facebookVideo,body:articleBody,category:old.category || "",status:"published",managed:true};
     await putGitHubFile(env, repo, path, toBase64Utf8(JSON.stringify(post,null,2)+"\n"), `${action === "edit" ? "Update" : "Publish"} article: ${title}`, existing?.sha || null);
     results.push({site,slug,path,image,status:"published"});
   }
