@@ -20,7 +20,7 @@
   "migrations": [
     {
       "tag": "v1-chat-room",
-      "new_classes": ["ChatRoom"]
+      "new_sqlite_classes": ["ChatRoom"]
     }
   ]
 }
