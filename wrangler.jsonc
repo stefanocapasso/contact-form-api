@@ -3,4 +3,11 @@
   "main": "src/index.js",
   "compatibility_date": "2026-08-20",
   "keep_vars": true
+,
+  "d1_databases": [
+    {
+      "binding": "CHAT_DB",
+      "database_id": "9af4c971-ff87-4371-b07a-93a4337335c1"
+    }
+  ]
 }
