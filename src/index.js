@@ -304,7 +304,7 @@ async function chatStart(request, env, corsOrigin, origin) {
     env.CHAT_DB.prepare("INSERT INTO chat_threads (id, code_hash, source_site, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))").bind(threadId,codeHash,sourceSite),
     env.CHAT_DB.prepare("INSERT INTO chat_messages (thread_id, sender, message, created_at) VALUES (?, 'user', ?, datetime('now'))").bind(threadId,message)
   ]);
-  await notifyOwner(env,"Nuovo messaggio chat anonima da " + sourceSite,["Conversazione: " + threadId.slice(0,8),"",message,"","Apri il pannello chat del sito per rispondere."]);
+  await notifyOwner(env,"Nuovo messaggio chat anonima da " + sourceSite,["Conversazione: " + threadId.slice(0,8),"",message,"","Rispondi qui:","https://www.stefanocapasso.net/chat-admin/"]);
   return json({ok:true,code,messages:[{sender:"user",message}]},200,corsOrigin);
 }
 async function getThreadByCode(env, code) {
@@ -335,7 +335,7 @@ async function chatUserReply(request, env, corsOrigin, origin) {
     env.CHAT_DB.prepare("INSERT INTO chat_messages (thread_id, sender, message, created_at) VALUES (?, 'user', ?, datetime('now'))").bind(thread.id,message),
     env.CHAT_DB.prepare("UPDATE chat_threads SET updated_at=datetime('now') WHERE id=?").bind(thread.id)
   ]);
-  await notifyOwner(env,"Nuova risposta chat anonima da " + thread.source_site,["Conversazione: " + thread.id.slice(0,8),"",message,"","Apri il pannello chat del sito per rispondere."]);
+  await notifyOwner(env,"Nuova risposta chat anonima da " + thread.source_site,["Conversazione: " + thread.id.slice(0,8),"",message,"","Rispondi qui:","https://www.stefanocapasso.net/chat-admin/"]);
   return json({ok:true},200,corsOrigin);
 }
 async function chatAdminList(request, env, corsOrigin) {
