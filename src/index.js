@@ -266,6 +266,22 @@ async function sha256Hex(value) {
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2,"0")).join("");
 }
 function chatDbReady(env) { return !!env.CHAT_DB; }
+async function adminTokenForThread(env, threadId) {
+  if (!env.PUBLISH_PASSWORD) return "";
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(env.PUBLISH_PASSWORD),
+    {name:"HMAC",hash:"SHA-256"},
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(threadId));
+  return [...new Uint8Array(sig)].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+async function validAdminThreadToken(env, threadId, token) {
+  if (!threadId || !token) return false;
+  return (await adminTokenForThread(env, threadId)) === String(token);
+}
 async function ensureChatSchema(env) {
   if (!chatDbReady(env)) return;
   await env.CHAT_DB.batch([
@@ -312,7 +328,9 @@ async function chatStart(request, env, corsOrigin, origin) {
     env.CHAT_DB.prepare("INSERT INTO chat_threads (id, code_hash, source_site, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))").bind(threadId,codeHash,sourceSite),
     env.CHAT_DB.prepare("INSERT INTO chat_messages (thread_id, sender, message, created_at) VALUES (?, 'user', ?, datetime('now'))").bind(threadId,message)
   ]);
-  await notifyOwner(env,"Nuovo messaggio chat anonima da " + sourceSite,["Conversazione: " + threadId.slice(0,8),"",message,"","Rispondi qui:","https://www.stefanocapasso.net/chat-admin/"]);
+  const adminToken = await adminTokenForThread(env, threadId);
+  const adminUrl = "https://www.stefanocapasso.net/chat-admin/?t=" + encodeURIComponent(threadId) + "&k=" + encodeURIComponent(adminToken);
+  await notifyOwner(env,"Nuovo messaggio chat anonima da " + sourceSite,["Conversazione: " + threadId.slice(0,8),"",message,"","Rispondi qui:",adminUrl]);
   return json({ok:true,code,messages:[{sender:"user",message}]},200,corsOrigin);
 }
 async function getThreadByCode(env, code) {
@@ -343,7 +361,9 @@ async function chatUserReply(request, env, corsOrigin, origin) {
     env.CHAT_DB.prepare("INSERT INTO chat_messages (thread_id, sender, message, created_at) VALUES (?, 'user', ?, datetime('now'))").bind(thread.id,message),
     env.CHAT_DB.prepare("UPDATE chat_threads SET updated_at=datetime('now') WHERE id=?").bind(thread.id)
   ]);
-  await notifyOwner(env,"Nuova risposta chat anonima da " + thread.source_site,["Conversazione: " + thread.id.slice(0,8),"",message,"","Rispondi qui:","https://www.stefanocapasso.net/chat-admin/"]);
+  const adminToken = await adminTokenForThread(env, thread.id);
+  const adminUrl = "https://www.stefanocapasso.net/chat-admin/?t=" + encodeURIComponent(thread.id) + "&k=" + encodeURIComponent(adminToken);
+  await notifyOwner(env,"Nuova risposta chat anonima da " + thread.source_site,["Conversazione: " + thread.id.slice(0,8),"",message,"","Rispondi qui:",adminUrl]);
   return json({ok:true},200,corsOrigin);
 }
 async function chatAdminList(request, env, corsOrigin) {
@@ -354,15 +374,16 @@ async function chatAdminList(request, env, corsOrigin) {
   return json({ok:true,threads:rows.results||[]},200,corsOrigin);
 }
 async function chatAdminMessages(request, env, corsOrigin, url) {
-  const configError=requirePublishingConfig(request,env,corsOrigin); if(configError) return configError;
   const id=url.searchParams.get("id")||"";
+  const token=url.searchParams.get("token")||"";
+  if (!(await validAdminThreadToken(env,id,token))) return json({ok:false,error:"Link non valido"},403,corsOrigin);
   const rows=await env.CHAT_DB.prepare("SELECT sender,message,created_at FROM chat_messages WHERE thread_id=? ORDER BY id ASC").bind(id).all();
   return json({ok:true,messages:rows.results||[]},200,corsOrigin);
 }
 async function chatAdminReply(request, env, corsOrigin) {
-  const configError=requirePublishingConfig(request,env,corsOrigin); if(configError) return configError;
   let body; try { body=await request.json(); } catch { return json({ok:false,error:"Invalid JSON"},400,corsOrigin); }
-  const id=String(body.id||""), message=String(body.message||"").trim();
+  const id=String(body.id||""), token=String(body.token||""), message=String(body.message||"").trim();
+  if (!(await validAdminThreadToken(env,id,token))) return json({ok:false,error:"Link non valido"},403,corsOrigin);
   if(!id || !message || message.length>2000) return json({ok:false,error:"Dati non validi"},400,corsOrigin);
   const exists=await env.CHAT_DB.prepare("SELECT id FROM chat_threads WHERE id=?").bind(id).first();
   if(!exists) return json({ok:false,error:"Conversazione non trovata"},404,corsOrigin);
