@@ -254,6 +254,105 @@ async function publishArticle(request, env, corsOrigin) {
   }
 }
 
+
+function randomChatCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint8Array(10);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => alphabet[b % alphabet.length]).join("");
+}
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2,"0")).join("");
+}
+function chatDbReady(env) { return !!env.CHAT_DB; }
+async function notifyOwner(env, subject, lines) {
+  if (!env.BREVO_API_KEY || !env.FROM_EMAIL || !env.TO_EMAIL) return;
+  try {
+    await fetch("https://api.brevo.com/v3/smtp/email", {
+      method:"POST",
+      headers:{"Content-Type":"application/json","Accept":"application/json","api-key":env.BREVO_API_KEY},
+      body:JSON.stringify({
+        sender:{name:(env.FROM_NAME || "Sito web") + " - chat anonima",email:env.FROM_EMAIL},
+        to:[{email:env.TO_EMAIL}],
+        subject,
+        textContent:lines.join("\n")
+      })
+    });
+  } catch (e) { console.error("Chat notification", e); }
+}
+async function chatStart(request, env, corsOrigin, origin) {
+  if (!corsOrigin) return json({ok:false,error:"Origin not allowed"},403);
+  if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);
+  let body; try { body = await request.json(); } catch { return json({ok:false,error:"Invalid JSON"},400,corsOrigin); }
+  const message=String(body.message||"").trim(), website=String(body.website||"").trim();
+  if (website) return json({ok:true},200,corsOrigin);
+  if (message.length < 3 || message.length > 2000) return json({ok:false,error:"Messaggio non valido"},400,corsOrigin);
+  const code=randomChatCode(), codeHash=await sha256Hex(code), threadId=crypto.randomUUID();
+  const sourceSite=origin.replace(/^https?:\/\//,"").replace(/^www\./,"") || "sito web";
+  await env.CHAT_DB.batch([
+    env.CHAT_DB.prepare("INSERT INTO chat_threads (id, code_hash, source_site, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))").bind(threadId,codeHash,sourceSite),
+    env.CHAT_DB.prepare("INSERT INTO chat_messages (thread_id, sender, message, created_at) VALUES (?, 'user', ?, datetime('now'))").bind(threadId,message)
+  ]);
+  await notifyOwner(env,"Nuovo messaggio chat anonima da " + sourceSite,["Conversazione: " + threadId.slice(0,8),"",message,"","Apri il pannello chat del sito per rispondere."]);
+  return json({ok:true,code,messages:[{sender:"user",message}]},200,corsOrigin);
+}
+async function getThreadByCode(env, code) {
+  if (!chatDbReady(env)) return null;
+  const codeHash=await sha256Hex(String(code||"").trim().toUpperCase());
+  return env.CHAT_DB.prepare("SELECT id, source_site, created_at, updated_at FROM chat_threads WHERE code_hash = ?").bind(codeHash).first();
+}
+async function chatRead(request, env, corsOrigin, url) {
+  if (!corsOrigin) return json({ok:false,error:"Origin not allowed"},403);
+  const code=(url.searchParams.get("code")||"").trim().toUpperCase();
+  if (!code) return json({ok:false,error:"Codice mancante"},400,corsOrigin);
+  const thread=await getThreadByCode(env,code);
+  if (!thread) return json({ok:false,error:"Conversazione non trovata"},404,corsOrigin);
+  const rows=await env.CHAT_DB.prepare("SELECT sender, message, created_at FROM chat_messages WHERE thread_id = ? ORDER BY id ASC").bind(thread.id).all();
+  return json({ok:true,messages:rows.results||[]},200,corsOrigin);
+}
+async function chatUserReply(request, env, corsOrigin, origin) {
+  if (!corsOrigin) return json({ok:false,error:"Origin not allowed"},403);
+  if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);
+  let body; try { body = await request.json(); } catch { return json({ok:false,error:"Invalid JSON"},400,corsOrigin); }
+  const code=String(body.code||"").trim().toUpperCase(), message=String(body.message||"").trim(), website=String(body.website||"").trim();
+  if (website) return json({ok:true},200,corsOrigin);
+  if (!code || message.length < 1 || message.length > 2000) return json({ok:false,error:"Dati non validi"},400,corsOrigin);
+  const thread=await getThreadByCode(env,code);
+  if (!thread) return json({ok:false,error:"Conversazione non trovata"},404,corsOrigin);
+  await env.CHAT_DB.batch([
+    env.CHAT_DB.prepare("INSERT INTO chat_messages (thread_id, sender, message, created_at) VALUES (?, 'user', ?, datetime('now'))").bind(thread.id,message),
+    env.CHAT_DB.prepare("UPDATE chat_threads SET updated_at=datetime('now') WHERE id=?").bind(thread.id)
+  ]);
+  await notifyOwner(env,"Nuova risposta chat anonima da " + thread.source_site,["Conversazione: " + thread.id.slice(0,8),"",message,"","Apri il pannello chat del sito per rispondere."]);
+  return json({ok:true},200,corsOrigin);
+}
+async function chatAdminList(request, env, corsOrigin) {
+  const configError=requirePublishingConfig(request,env,corsOrigin); if(configError) return configError;
+  if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);
+  const rows=await env.CHAT_DB.prepare("SELECT t.id,t.source_site,t.created_at,t.updated_at,(SELECT message FROM chat_messages m WHERE m.thread_id=t.id ORDER BY m.id DESC LIMIT 1) AS last_message FROM chat_threads t ORDER BY t.updated_at DESC LIMIT 100").all();
+  return json({ok:true,threads:rows.results||[]},200,corsOrigin);
+}
+async function chatAdminMessages(request, env, corsOrigin, url) {
+  const configError=requirePublishingConfig(request,env,corsOrigin); if(configError) return configError;
+  const id=url.searchParams.get("id")||"";
+  const rows=await env.CHAT_DB.prepare("SELECT sender,message,created_at FROM chat_messages WHERE thread_id=? ORDER BY id ASC").bind(id).all();
+  return json({ok:true,messages:rows.results||[]},200,corsOrigin);
+}
+async function chatAdminReply(request, env, corsOrigin) {
+  const configError=requirePublishingConfig(request,env,corsOrigin); if(configError) return configError;
+  let body; try { body=await request.json(); } catch { return json({ok:false,error:"Invalid JSON"},400,corsOrigin); }
+  const id=String(body.id||""), message=String(body.message||"").trim();
+  if(!id || !message || message.length>2000) return json({ok:false,error:"Dati non validi"},400,corsOrigin);
+  const exists=await env.CHAT_DB.prepare("SELECT id FROM chat_threads WHERE id=?").bind(id).first();
+  if(!exists) return json({ok:false,error:"Conversazione non trovata"},404,corsOrigin);
+  await env.CHAT_DB.batch([
+    env.CHAT_DB.prepare("INSERT INTO chat_messages (thread_id,sender,message,created_at) VALUES (?,'admin',?,datetime('now'))").bind(id,message),
+    env.CHAT_DB.prepare("UPDATE chat_threads SET updated_at=datetime('now') WHERE id=?").bind(id)
+  ]);
+  return json({ok:true},200,corsOrigin);
+}
+
 async function anonymousMessage(request, env, corsOrigin, origin) {
   if (!corsOrigin) return json({ok:false,error:"Origin not allowed"},403);
   if (!env.BREVO_API_KEY || !env.FROM_EMAIL || !env.TO_EMAIL) return json({ok:false,error:"Server configuration incomplete"},500,corsOrigin);
@@ -326,7 +425,7 @@ export default {
       if (request.method === "GET" && url.pathname === "/articles") return listArticles(request,env,corsOrigin,url);
       if (request.method === "GET" && url.pathname === "/article") return getArticle(request,env,corsOrigin,url);
       if (request.method === "POST" && url.pathname === "/contact") return contactForm(request,env,corsOrigin,origin);
-      if (request.method === "POST" && url.pathname === "/anonymous") return anonymousMessage(request,env,corsOrigin,origin);
+      if (request.method === "POST" && url.pathname === "/anonymous") return anonymousMessage(request,env,corsOrigin,origin);\n      if (request.method === "POST" && url.pathname === "/chat/start") return chatStart(request,env,corsOrigin,origin);\n      if (request.method === "GET" && url.pathname === "/chat") return chatRead(request,env,corsOrigin,url);\n      if (request.method === "POST" && url.pathname === "/chat/reply") return chatUserReply(request,env,corsOrigin,origin);\n      if (request.method === "GET" && url.pathname === "/chat/admin/threads") return chatAdminList(request,env,corsOrigin);\n      if (request.method === "GET" && url.pathname === "/chat/admin/messages") return chatAdminMessages(request,env,corsOrigin,url);\n      if (request.method === "POST" && url.pathname === "/chat/admin/reply") return chatAdminReply(request,env,corsOrigin);
       if (request.method === "POST" && url.pathname === "/publish") return publishArticle(request,env,corsOrigin);
       return json({ok:false,error:"Not found"},404,corsOrigin);
     } catch (e) {
