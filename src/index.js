@@ -266,6 +266,15 @@ async function sha256Hex(value) {
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2,"0")).join("");
 }
 function chatDbReady(env) { return !!env.CHAT_DB; }
+async function ensureChatSchema(env) {
+  if (!chatDbReady(env)) return;
+  await env.CHAT_DB.batch([
+    env.CHAT_DB.prepare("CREATE TABLE IF NOT EXISTS chat_threads (id TEXT PRIMARY KEY, code_hash TEXT NOT NULL UNIQUE, source_site TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))"),
+    env.CHAT_DB.prepare("CREATE TABLE IF NOT EXISTS chat_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL, sender TEXT NOT NULL CHECK (sender IN ('user','admin')), message TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY (thread_id) REFERENCES chat_threads(id) ON DELETE CASCADE)"),
+    env.CHAT_DB.prepare("CREATE INDEX IF NOT EXISTS idx_chat_threads_updated ON chat_threads(updated_at DESC)"),
+    env.CHAT_DB.prepare("CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(thread_id, id)")
+  ]);
+}
 async function notifyOwner(env, subject, lines) {
   if (!env.BREVO_API_KEY || !env.FROM_EMAIL || !env.TO_EMAIL) return;
   try {
@@ -283,7 +292,7 @@ async function notifyOwner(env, subject, lines) {
 }
 async function chatStart(request, env, corsOrigin, origin) {
   if (!corsOrigin) return json({ok:false,error:"Origin not allowed"},403);
-  if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);
+  if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);\n  await ensureChatSchema(env);
   let body; try { body = await request.json(); } catch { return json({ok:false,error:"Invalid JSON"},400,corsOrigin); }
   const message=String(body.message||"").trim(), website=String(body.website||"").trim();
   if (website) return json({ok:true},200,corsOrigin);
@@ -313,7 +322,7 @@ async function chatRead(request, env, corsOrigin, url) {
 }
 async function chatUserReply(request, env, corsOrigin, origin) {
   if (!corsOrigin) return json({ok:false,error:"Origin not allowed"},403);
-  if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);
+  if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);\n  await ensureChatSchema(env);
   let body; try { body = await request.json(); } catch { return json({ok:false,error:"Invalid JSON"},400,corsOrigin); }
   const code=String(body.code||"").trim().toUpperCase(), message=String(body.message||"").trim(), website=String(body.website||"").trim();
   if (website) return json({ok:true},200,corsOrigin);
@@ -329,7 +338,7 @@ async function chatUserReply(request, env, corsOrigin, origin) {
 }
 async function chatAdminList(request, env, corsOrigin) {
   const configError=requirePublishingConfig(request,env,corsOrigin); if(configError) return configError;
-  if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);
+  if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);\n  await ensureChatSchema(env);
   const rows=await env.CHAT_DB.prepare("SELECT t.id,t.source_site,t.created_at,t.updated_at,(SELECT message FROM chat_messages m WHERE m.thread_id=t.id ORDER BY m.id DESC LIMIT 1) AS last_message FROM chat_threads t ORDER BY t.updated_at DESC LIMIT 100").all();
   return json({ok:true,threads:rows.results||[]},200,corsOrigin);
 }
