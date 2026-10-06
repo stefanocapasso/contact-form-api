@@ -292,7 +292,8 @@ async function notifyOwner(env, subject, lines) {
 }
 async function chatStart(request, env, corsOrigin, origin) {
   if (!corsOrigin) return json({ok:false,error:"Origin not allowed"},403);
-  if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);\n  await ensureChatSchema(env);
+  if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);
+  await ensureChatSchema(env);
   let body; try { body = await request.json(); } catch { return json({ok:false,error:"Invalid JSON"},400,corsOrigin); }
   const message=String(body.message||"").trim(), website=String(body.website||"").trim();
   if (website) return json({ok:true},200,corsOrigin);
@@ -322,7 +323,8 @@ async function chatRead(request, env, corsOrigin, url) {
 }
 async function chatUserReply(request, env, corsOrigin, origin) {
   if (!corsOrigin) return json({ok:false,error:"Origin not allowed"},403);
-  if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);\n  await ensureChatSchema(env);
+  if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);
+  await ensureChatSchema(env);
   let body; try { body = await request.json(); } catch { return json({ok:false,error:"Invalid JSON"},400,corsOrigin); }
   const code=String(body.code||"").trim().toUpperCase(), message=String(body.message||"").trim(), website=String(body.website||"").trim();
   if (website) return json({ok:true},200,corsOrigin);
@@ -338,7 +340,8 @@ async function chatUserReply(request, env, corsOrigin, origin) {
 }
 async function chatAdminList(request, env, corsOrigin) {
   const configError=requirePublishingConfig(request,env,corsOrigin); if(configError) return configError;
-  if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);\n  await ensureChatSchema(env);
+  if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);
+  await ensureChatSchema(env);
   const rows=await env.CHAT_DB.prepare("SELECT t.id,t.source_site,t.created_at,t.updated_at,(SELECT message FROM chat_messages m WHERE m.thread_id=t.id ORDER BY m.id DESC LIMIT 1) AS last_message FROM chat_threads t ORDER BY t.updated_at DESC LIMIT 100").all();
   return json({ok:true,threads:rows.results||[]},200,corsOrigin);
 }
@@ -434,7 +437,13 @@ export default {
       if (request.method === "GET" && url.pathname === "/articles") return listArticles(request,env,corsOrigin,url);
       if (request.method === "GET" && url.pathname === "/article") return getArticle(request,env,corsOrigin,url);
       if (request.method === "POST" && url.pathname === "/contact") return contactForm(request,env,corsOrigin,origin);
-      if (request.method === "POST" && url.pathname === "/anonymous") return anonymousMessage(request,env,corsOrigin,origin);\n      if (request.method === "POST" && url.pathname === "/chat/start") return chatStart(request,env,corsOrigin,origin);\n      if (request.method === "GET" && url.pathname === "/chat") return chatRead(request,env,corsOrigin,url);\n      if (request.method === "POST" && url.pathname === "/chat/reply") return chatUserReply(request,env,corsOrigin,origin);\n      if (request.method === "GET" && url.pathname === "/chat/admin/threads") return chatAdminList(request,env,corsOrigin);\n      if (request.method === "GET" && url.pathname === "/chat/admin/messages") return chatAdminMessages(request,env,corsOrigin,url);\n      if (request.method === "POST" && url.pathname === "/chat/admin/reply") return chatAdminReply(request,env,corsOrigin);
+      if (request.method === "POST" && url.pathname === "/anonymous") return anonymousMessage(request,env,corsOrigin,origin);
+      if (request.method === "POST" && url.pathname === "/chat/start") return chatStart(request,env,corsOrigin,origin);
+      if (request.method === "GET" && url.pathname === "/chat") return chatRead(request,env,corsOrigin,url);
+      if (request.method === "POST" && url.pathname === "/chat/reply") return chatUserReply(request,env,corsOrigin,origin);
+      if (request.method === "GET" && url.pathname === "/chat/admin/threads") return chatAdminList(request,env,corsOrigin);
+      if (request.method === "GET" && url.pathname === "/chat/admin/messages") return chatAdminMessages(request,env,corsOrigin,url);
+      if (request.method === "POST" && url.pathname === "/chat/admin/reply") return chatAdminReply(request,env,corsOrigin);
       if (request.method === "POST" && url.pathname === "/publish") return publishArticle(request,env,corsOrigin);
       return json({ok:false,error:"Not found"},404,corsOrigin);
     } catch (e) {
