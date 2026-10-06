@@ -254,6 +254,43 @@ async function publishArticle(request, env, corsOrigin) {
   }
 }
 
+async function anonymousMessage(request, env, corsOrigin, origin) {
+  if (!corsOrigin) return json({ok:false,error:"Origin not allowed"},403);
+  if (!env.BREVO_API_KEY || !env.FROM_EMAIL || !env.TO_EMAIL) return json({ok:false,error:"Server configuration incomplete"},500,corsOrigin);
+  let body; try { body = await request.json(); } catch { return json({ok:false,error:"Invalid JSON"},400,corsOrigin); }
+  const message = String(body.message || "").trim();
+  const website = String(body.website || "").trim();
+  if (website) return json({ok:true},200,corsOrigin);
+  if (message.length < 10 || message.length > 2000) return json({ok:false,error:"Messaggio non valido"},400,corsOrigin);
+  const sourceSite = origin.replace(/^https?:\/\//, "").replace(/^www\./, "") || "sito web";
+  const subject = `Messaggio anonimo da ${sourceSite}`;
+  const textContent = [
+    `Nuovo messaggio anonimo da ${sourceSite}`,
+    "",
+    "Nessun nome, email o numero di telefono è stato richiesto.",
+    "Non è prevista una risposta diretta se la persona non torna volontariamente a contattarti.",
+    "",
+    "Messaggio:",
+    message
+  ].join("\n");
+  const brevoResponse = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method:"POST",
+    headers:{"Content-Type":"application/json","Accept":"application/json","api-key":env.BREVO_API_KEY},
+    body:JSON.stringify({
+      sender:{name:(env.FROM_NAME || "Sito web") + " - anonimo",email:env.FROM_EMAIL},
+      to:[{email:env.TO_EMAIL}],
+      subject,
+      textContent
+    })
+  });
+  if (!brevoResponse.ok) {
+    const detail = await brevoResponse.text();
+    console.error("Brevo anonymous error",brevoResponse.status,detail);
+    return json({ok:false,error:"Invio non riuscito"},502,corsOrigin);
+  }
+  return json({ok:true},200,corsOrigin);
+}
+
 async function contactForm(request, env, corsOrigin, origin) {
   if (!corsOrigin) return json({ok:false,error:"Origin not allowed"},403);
   if (!env.BREVO_API_KEY || !env.FROM_EMAIL || !env.TO_EMAIL) return json({ok:false,error:"Server configuration incomplete"},500,corsOrigin);
@@ -289,6 +326,7 @@ export default {
       if (request.method === "GET" && url.pathname === "/articles") return listArticles(request,env,corsOrigin,url);
       if (request.method === "GET" && url.pathname === "/article") return getArticle(request,env,corsOrigin,url);
       if (request.method === "POST" && url.pathname === "/contact") return contactForm(request,env,corsOrigin,origin);
+      if (request.method === "POST" && url.pathname === "/anonymous") return anonymousMessage(request,env,corsOrigin,origin);
       if (request.method === "POST" && url.pathname === "/publish") return publishArticle(request,env,corsOrigin);
       return json({ok:false,error:"Not found"},404,corsOrigin);
     } catch (e) {
