@@ -339,8 +339,8 @@ async function notifyOwner(env, subject, lines) {
     const escaped = lines.map(line => String(line)
       .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"));
     const panelUrl = "https://www.stefanocapasso.net/chat-admin/";
-    const htmlContent = escaped.map(line => line === panelUrl
-      ? '<p><a href="' + panelUrl + '" style="display:inline-block;padding:10px 14px;background:#222;color:#fff;text-decoration:none;border-radius:6px">Apri il pannello chat</a></p><p><a href="' + panelUrl + '">' + panelUrl + '</a></p>'
+    const htmlContent = escaped.map(line => line.startsWith(panelUrl)
+      ? '<p><a href="' + line + '" style="display:inline-block;padding:10px 14px;background:#222;color:#fff;text-decoration:none;border-radius:6px">Apri il pannello chat</a></p><p><a href="' + line + '">' + line + '</a></p>'
       : (line ? "<p>" + line + "</p>" : "<br>")).join("");
     await fetch("https://api.brevo.com/v3/smtp/email", {
       method:"POST",
