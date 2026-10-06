@@ -1,3 +1,32 @@
+export class ChatRoom {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+  }
+  async fetch(request) {
+    const upgrade = request.headers.get("Upgrade");
+    if (upgrade === "websocket") {
+      const pair = new WebSocketPair();
+      const client = pair[0], server = pair[1];
+      this.state.acceptWebSocket(server);
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    const url = new URL(request.url);
+    if (request.method === "POST" && url.pathname === "/broadcast") {
+      const data = await request.json();
+      const payload = JSON.stringify(data);
+      for (const ws of this.state.getWebSockets()) {
+        try { ws.send(payload); } catch {}
+      }
+      return new Response("ok");
+    }
+    return new Response("Not found", { status: 404 });
+  }
+  webSocketMessage() {}
+  webSocketClose() {}
+  webSocketError() {}
+}
+
 const DEFAULT_ALLOWED_ORIGINS = [
   "https://www.stefanocapasso.net",
   "https://stefanocapasso.net",
@@ -266,6 +295,18 @@ async function sha256Hex(value) {
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2,"0")).join("");
 }
 function chatDbReady(env) { return !!env.CHAT_DB; }
+async function broadcastChatEvent(env, threadId, data) {
+  if (!env.CHAT_ROOMS || !threadId) return;
+  try {
+    const id = env.CHAT_ROOMS.idFromName(threadId);
+    const stub = env.CHAT_ROOMS.get(id);
+    await stub.fetch("https://chat.internal/broadcast", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(data)
+    });
+  } catch (e) { console.error("Chat broadcast", e); }
+}
 async function adminTokenForThread(env, threadId) {
   if (!env.PUBLISH_PASSWORD) return "";
   const key = await crypto.subtle.importKey(
@@ -331,6 +372,7 @@ async function chatStart(request, env, corsOrigin, origin) {
   const adminToken = await adminTokenForThread(env, threadId);
   const adminUrl = "https://www.stefanocapasso.net/chat-admin/?t=" + encodeURIComponent(threadId) + "&k=" + encodeURIComponent(adminToken);
   await notifyOwner(env,"Nuovo messaggio chat anonima da " + sourceSite,["Conversazione: " + threadId.slice(0,8),"",message,"","Rispondi qui:",adminUrl]);
+  await broadcastChatEvent(env,threadId,{type:"message",sender:"user",message});
   return json({ok:true,code,messages:[{sender:"user",message}]},200,corsOrigin);
 }
 async function getThreadByCode(env, code) {
@@ -364,8 +406,29 @@ async function chatUserReply(request, env, corsOrigin, origin) {
   const adminToken = await adminTokenForThread(env, thread.id);
   const adminUrl = "https://www.stefanocapasso.net/chat-admin/?t=" + encodeURIComponent(thread.id) + "&k=" + encodeURIComponent(adminToken);
   await notifyOwner(env,"Nuova risposta chat anonima da " + thread.source_site,["Conversazione: " + thread.id.slice(0,8),"",message,"","Rispondi qui:",adminUrl]);
+  await broadcastChatEvent(env,thread.id,{type:"message",sender:"user",message});
   return json({ok:true},200,corsOrigin);
 }
+async function chatLive(request, env, corsOrigin, url) {
+  if (!corsOrigin) return json({ok:false,error:"Origin not allowed"},403);
+  if (!env.CHAT_ROOMS) return json({ok:false,error:"Chat live non configurata"},503,corsOrigin);
+  const code=(url.searchParams.get("code")||"").trim().toUpperCase();
+  const id=(url.searchParams.get("id")||"").trim();
+  const token=(url.searchParams.get("token")||"").trim();
+  let threadId="";
+  if (code) {
+    const thread=await getThreadByCode(env,code);
+    if (!thread) return json({ok:false,error:"Conversazione non trovata"},404,corsOrigin);
+    threadId=thread.id;
+  } else if (id && await validAdminThreadToken(env,id,token)) {
+    threadId=id;
+  } else {
+    return json({ok:false,error:"Accesso non valido"},403,corsOrigin);
+  }
+  const durableId=env.CHAT_ROOMS.idFromName(threadId);
+  return env.CHAT_ROOMS.get(durableId).fetch(request);
+}
+
 async function chatAdminList(request, env, corsOrigin) {
   const configError=requirePublishingConfig(request,env,corsOrigin); if(configError) return configError;
   if (!chatDbReady(env)) return json({ok:false,error:"Chat non configurata"},503,corsOrigin);
@@ -391,6 +454,7 @@ async function chatAdminReply(request, env, corsOrigin) {
     env.CHAT_DB.prepare("INSERT INTO chat_messages (thread_id,sender,message,created_at) VALUES (?,'admin',?,datetime('now'))").bind(id,message),
     env.CHAT_DB.prepare("UPDATE chat_threads SET updated_at=datetime('now') WHERE id=?").bind(id)
   ]);
+  await broadcastChatEvent(env,id,{type:"message",sender:"admin",message});
   return json({ok:true},200,corsOrigin);
 }
 
@@ -469,6 +533,7 @@ export default {
       if (request.method === "POST" && url.pathname === "/anonymous") return anonymousMessage(request,env,corsOrigin,origin);
       if (request.method === "POST" && url.pathname === "/chat/start") return chatStart(request,env,corsOrigin,origin);
       if (request.method === "GET" && url.pathname === "/chat") return chatRead(request,env,corsOrigin,url);
+      if (request.method === "GET" && url.pathname === "/chat/live") return chatLive(request,env,corsOrigin,url);
       if (request.method === "POST" && url.pathname === "/chat/reply") return chatUserReply(request,env,corsOrigin,origin);
       if (request.method === "GET" && url.pathname === "/chat/admin/threads") return chatAdminList(request,env,corsOrigin);
       if (request.method === "GET" && url.pathname === "/chat/admin/messages") return chatAdminMessages(request,env,corsOrigin,url);
